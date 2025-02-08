@@ -5,7 +5,9 @@ import { Sidebar, SidebarBody, SidebarLink } from "@/components/ui/sidebar";
 import {
   IconArrowLeft,
   IconCalendar,
+  IconCircleNumber1,
   IconHome,
+  IconScoreboard,
   IconSettings,
   IconUser,
 } from "@tabler/icons-react";
@@ -23,12 +25,12 @@ const sidebarLinks = [
   {
     label: "attandence",
     href: "/event/attandence",
-    icon: <IconCalendar className="text-neutral-700 dark:text-neutral-200 h-5 w-5 flex-shrink-0" />,
+    icon: <IconCircleNumber1 className="text-neutral-700 dark:text-neutral-200 h-5 w-5 flex-shrink-0" />,
   },
   {
-    label: "Profile",
+    label: "Results",
     href: "/profile",
-    icon: <IconUser className="text-neutral-700 dark:text-neutral-200 h-5 w-5 flex-shrink-0" />,
+    icon: <IconScoreboard className="text-neutral-700 dark:text-neutral-200 h-5 w-5 flex-shrink-0" />,
   },
   {
     label: "Settings",
@@ -44,49 +46,43 @@ const sidebarLinks = [
 
 export default function EventLayout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(true); // Keep sidebar open by default
-  const sidebarWidth = open ? "w-64" : "w-16"; // Adjust based on open state
-
   return (
-    <div className="flex h-screen w-full bg-gray-100 dark:bg-neutral-800">
-      {/* Sidebar */}
-      <div className={`fixed h-screen ${sidebarWidth} transition-all`}>
-        <Sidebar open={open} setOpen={setOpen}>
-          <SidebarBody className="flex flex-col justify-between gap-10">
-            <div className="flex flex-col flex-1 overflow-y-auto">
-              {open ? <Logo /> : <LogoIcon />}
-              <div className="mt-8 flex flex-col gap-2">
-                {sidebarLinks.map((link) => (
-                  <SidebarLink key={link.href} link={link} />
-                ))}
-              </div>
+<div
+      className={cn(
+        "rounded-md flex flex-col md:flex-row bg-gray-100 dark:bg-neutral-800 w-full flex-1 max-w-full  mx-auto border border-neutral-200 dark:border-neutral-700 overflow-hidden",
+        "h-[100vh]" // for your use case, use `h-screen` instead of `h-[60vh]`
+      )}
+    >
+      <Sidebar open={open} setOpen={setOpen}>
+        <SidebarBody className="justify-between gap-10">
+          <div className="flex flex-col flex-1 overflow-y-auto overflow-x-hidden">
+            {open ? <Logo /> : <LogoIcon />}
+            <div className="mt-8 flex flex-col gap-2">
+              {sidebarLinks.map((link, idx) => (
+                <SidebarLink key={idx} link={link} />
+              ))}
             </div>
-            <div>
-              <SidebarLink
-                link={{
-                  label: "User Profile",
-                  href: "/profile",
-                  icon: (
-                    <Image
-                      src="https://assets.aceternity.com/manu.png"
-                      className="h-7 w-7 flex-shrink-0 rounded-full"
-                      width={50}
-                      height={50}
-                      alt="Avatar"
-                    />
-                  ),
-                }}
-              />
-            </div>
-          </SidebarBody>
-        </Sidebar>
-      </div>
-
-      {/* Main Content - Adjust margin-left to avoid overlapping */}
-      <div
-        className={`flex flex-1 transition-all ml-${open ? "64" : "16"} p-6 md:p-10 bg-white dark:bg-neutral-900 rounded-tl-2xl border border-neutral-200 dark:border-neutral-700 h-full overflow-y-auto`}
-      >
-        {children}
-      </div>
+          </div>
+          <div>
+            <SidebarLink
+              link={{
+                label: "Manu Arora",
+                href: "#",
+                icon: (
+                  <Image
+                    src="https://assets.aceternity.com/manu.png"
+                    className="h-7 w-7 flex-shrink-0 rounded-full"
+                    width={50}
+                    height={50}
+                    alt="Avatar"
+                  />
+                ),
+              }}
+            />
+          </div>
+        </SidebarBody>
+      </Sidebar>
+      {children}
     </div>
   );
 }

@@ -85,7 +85,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {!isNoLayoutPage ? (
+        {/* {!isNoLayoutPage ? (
           <div className="flex flex-col min-h-screen">
             <div className="flex-grow">{children}</div>
             <div className="flex justify-center w-full fixed bottom-0 z-10">
@@ -94,7 +94,8 @@ export default function RootLayout({
           </div>
         ) : (
           children
-        )}
+        )} */}
+        {children}
       </body>
     </html>
   );
