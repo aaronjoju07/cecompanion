@@ -98,7 +98,7 @@ export default function EventRegistration() {
 
     return (
         <div className="w-full h-full">
-            <section className="w-full h-[40vh] lg:h-[55vh] bg-cover bg-center" style={{ background: '#F5F5F5' }}></section>
+            <section className="w-full h-[20vh] lg:h-[55vh] bg-cover bg-center" style={{ background: '#F5F5F5' }}></section>
             <div className="absolute top-1/2 left-[5%] md:left-[10%] -translate-y-1/2 text-black">
                 <h1 className="text-3xl md:text-5xl font-bold">Register for an Event</h1>
                 <p className="text-sm md:text-lg">Fill the details below to register for an event</p>
