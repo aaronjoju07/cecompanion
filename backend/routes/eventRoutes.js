@@ -1,3 +1,4 @@
+// /routes/eventRoutes.js
 const express = require('express');
 const router = express.Router();
 const {
@@ -6,7 +7,8 @@ const {
   getEventById,
   updateEvent,
   deleteEvent,
-  optimizeEventScheduling
+  optimizeEventScheduling,
+  getMyEvents
 } = require('../controllers/eventController');
 const { 
   authMiddleware, 
@@ -21,6 +23,12 @@ router.get('/', getAllEvents);
 router.get('/:id', getEventById);
 
 // Protected Routes for Organizers
+router.get('/organizer/my-events', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  getMyEvents
+);
+
 router.post('/', 
   authMiddleware, 
   roleMiddleware(['organizer']), 

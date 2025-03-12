@@ -1,3 +1,4 @@
+// /model/Event.js
 const mongoose = require('mongoose');
 
 const SubEventSchema = new mongoose.Schema({
@@ -54,6 +55,11 @@ const EventSchema = new mongoose.Schema({
   contactInfo: {
     email: String,
     phone: String
+  },
+  organizer: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Organizer ID is required']
   },
   subEvents: [SubEventSchema],
   registeredStudents: [{

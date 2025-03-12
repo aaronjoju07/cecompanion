@@ -1,3 +1,4 @@
+// /contoroller/eventController.js
 const { Event, SubEvent } = require('../models/Event');
 const EventSchedulingAlgorithm = require('../utils/eventSchedulingAlgorithm');
 
@@ -14,7 +15,7 @@ exports.createEvent = async (req, res) => {
     // Create sub-events first
     const createdSubEvents = await SubEvent.create(subEvents || []);
 
-    // Create main event
+    // Create main event with organizer info
     const newEvent = new Event({
       name,
       description,
@@ -26,7 +27,8 @@ exports.createEvent = async (req, res) => {
       organizingCollege,
       generalRules,
       contactInfo,
-      subEvents: createdSubEvents.map(se => se._id)
+      subEvents: createdSubEvents.map(se => se._id),
+      organizer: req.user._id  // Add the authenticated user as organizer
     });
 
     await newEvent.save();
@@ -57,6 +59,7 @@ exports.getAllEvents = async (req, res) => {
 
     const events = await Event.find(query)
       .populate('subEvents')
+      .populate('organizer', 'username email')
       .sort({ 'conductedDates.start': 1 });
 
     res.json(events);
@@ -72,7 +75,8 @@ exports.getEventById = async (req, res) => {
   try {
     const event = await Event.findById(req.params.id)
       .populate('subEvents')
-      .populate('registeredStudents', 'username email');
+      .populate('registeredStudents', 'username email')
+      .populate('organizer', 'username email');
 
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
@@ -87,17 +91,46 @@ exports.getEventById = async (req, res) => {
   }
 };
 
+exports.getMyEvents = async (req, res) => {
+  try {
+    const events = await Event.find({ organizer: req.user._id })
+      .populate('subEvents')
+      .populate('registeredStudents', 'username email')
+      .sort({ 'conductedDates.start': 1 });
+
+    res.json({
+      count: events.length,
+      events: events
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Error fetching your events', 
+      error: error.message 
+    });
+  }
+};
+
 exports.updateEvent = async (req, res) => {
   try {
+    // First check if the user is the organizer of this event
+    const event = await Event.findById(req.params.id);
+    
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+    
+    // Check if the user is the organizer
+    if (event.organizer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        message: 'You are not authorized to update this event' 
+      });
+    }
+
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id, 
       req.body, 
       { new: true, runValidators: true }
     );
-
-    if (!updatedEvent) {
-      return res.status(404).json({ message: 'Event not found' });
-    }
 
     res.json({
       message: 'Event updated successfully',
@@ -113,11 +146,21 @@ exports.updateEvent = async (req, res) => {
 
 exports.deleteEvent = async (req, res) => {
   try {
-    const deletedEvent = await Event.findByIdAndDelete(req.params.id);
-
-    if (!deletedEvent) {
+    // First check if the user is the organizer of this event
+    const event = await Event.findById(req.params.id);
+    
+    if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
+    
+    // Check if the user is the organizer
+    if (event.organizer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        message: 'You are not authorized to delete this event' 
+      });
+    }
+
+    const deletedEvent = await Event.findByIdAndDelete(req.params.id);
 
     // Optional: Delete associated sub-events
     await SubEvent.deleteMany({ _id: { $in: deletedEvent.subEvents } });
