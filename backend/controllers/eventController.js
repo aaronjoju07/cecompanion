@@ -1,7 +1,10 @@
 // /contoroller/eventController.js
 const { Event, SubEvent } = require('../models/Event');
 const EventSchedulingAlgorithm = require('../utils/eventSchedulingAlgorithm');
+const fs = require('fs');
+const path = require('path');
 
+// In /contoroller/eventController.js
 exports.createEvent = async (req, res) => {
   try {
     const {
@@ -12,10 +15,7 @@ exports.createEvent = async (req, res) => {
       contactInfo, subEvents
     } = req.body;
 
-    // Create sub-events first
-    const createdSubEvents = await SubEvent.create(subEvents || []);
-
-    // Create main event with organizer info
+    // Create main event with embedded sub-events directly
     const newEvent = new Event({
       name,
       description,
@@ -27,9 +27,15 @@ exports.createEvent = async (req, res) => {
       organizingCollege,
       generalRules,
       contactInfo,
-      subEvents: createdSubEvents.map(se => se._id),
-      organizer: req.user._id  // Add the authenticated user as organizer
+      subEvents: subEvents || [], // Include sub-events directly
+      organizer: req.user._id
     });
+
+    if (req.files?.pdf) {
+      const pdfPath = path.join(__dirname, '../pdfs', `${newEvent._id}.pdf`);
+      await req.files.pdf.mv(pdfPath);
+      await chatbotService.addNewPDF(pdfPath);
+    }
 
     await newEvent.save();
 

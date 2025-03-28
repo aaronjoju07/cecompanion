@@ -1,0 +1,1539 @@
+relative path - //server.js
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const dotenv = require('dotenv');
+const connectDB = require('./config/database');
+// import connectDB from './config/database';
+
+// Load environment variables
+dotenv.config();
+
+// Create Express app
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// Connect to Database
+connectDB();
+
+// Import Routes
+const authRoutes = require('./routes/authRoutes');
+const eventRoutes = require('./routes/eventRoutes');
+const registrationRoutes = require('./routes/registrationRoutes');
+const schedulingRoutes = require('./routes/schedulingRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
+
+// Mount Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/registrations', registrationRoutes);
+app.use('/api/scheduling', schedulingRoutes);
+app.use('/api/analytics', analyticsRoutes);
+
+// Global Error Handler
+app.use((err, _req, res, _next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    message: 'Something went wrong!',
+    error: process.env.NODE_ENV === 'development' ? err.message : {}
+  });
+});
+
+// Start Server
+const PORT = process.env.PORT || 5000;
+const server = app.listen(PORT, () => {
+  console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err);
+  server.close(() => process.exit(1));
+});
+relative path - //package.json
+{
+  "name": "event-management-system",
+  "version": "1.0.0",
+  "description": "Event Management Application Backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.2.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^7.5.3",
+    "qrcode": "^1.5.3",
+    "validator": "^13.11.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.1"
+  }
+}
+
+relative path - //config/database.js
+const mongoose = require('mongoose');
+require('dotenv').config();
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('MongoDB connected successfully');
+  } catch (error) {
+    console.error('MongoDB connection error:', error.message);
+    process.exit(1);
+  }
+};
+
+module.exports = connectDB;
+relative path - //middlewares/authMiddleware.js
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+
+const authMiddleware = async (req, res, next) => {
+  try {
+    // Get token from header
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+
+    if (!token) {
+      return res.status(401).json({ message: 'No token, authorization denied' });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Find user
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      throw new Error('Please authenticate');
+    }
+
+    // Attach user and token to request object
+    req.token = token;
+    req.user = user;
+    next();
+  } catch (error) {
+    res.status(401).send({ error: 'Please authenticate' });
+  }
+};
+
+const roleMiddleware = (roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).send({ 
+        error: 'Access denied. Insufficient permissions.' 
+      });
+    }
+    next();
+  };
+};
+
+module.exports = { 
+  authMiddleware, 
+  roleMiddleware 
+};
+relative path - //middlewares/validationMiddleware.js
+const { body, validationResult } = require('express-validator');
+
+const validateRegistration = [
+  body('username')
+    .trim()
+    .isLength({ min: 3 }).withMessage('Username must be at least 3 characters long')
+    .matches(/^[a-zA-Z0-9_]+$/).withMessage('Username can only contain letters, numbers, and underscores'),
+  
+  body('email')
+    .trim()
+    .isEmail().withMessage('Please provide a valid email address'),
+  
+  body('password')
+    .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long')
+    .matches(/\d/).withMessage('Password must contain a number')
+    .matches(/[A-Z]/).withMessage('Password must contain an uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain a lowercase letter'),
+  
+  body('role')
+    .isIn(['student', 'organizer']).withMessage('Invalid role selected'),
+  
+  body('course')
+    .not().isEmpty().withMessage('Course is required'),
+  
+  body('department')
+    .not().isEmpty().withMessage('Department is required'),
+
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+const validateEvent = [
+  body('name')
+    .trim()
+    .not().isEmpty().withMessage('Event name is required')
+    .isLength({ min: 3, max: 100 }).withMessage('Event name must be between 3 and 100 characters'),
+  
+  body('description')
+    .trim()
+    .not().isEmpty().withMessage('Event description is required')
+    .isLength({ min: 10, max: 1000 }).withMessage('Description must be between 10 and 1000 characters'),
+  
+  body('conductedDates.start')
+    .isISO8601().toDate().withMessage('Invalid start date'),
+  
+  body('conductedDates.end')
+    .isISO8601().toDate().withMessage('Invalid end date')
+    .custom((value, { req }) => {
+      if (new Date(value) <= new Date(req.body.conductedDates.start)) {
+        throw new Error('End date must be after start date');
+      }
+      return true;
+    }),
+  
+  body('maximumStudents')
+    .optional()
+    .isInt({ min: 1 }).withMessage('Maximum students must be a positive number'),
+
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+module.exports = { validateRegistration, validateEvent };
+
+relative path - //utils/analyticsHelper.js
+const { Event, SubEvent } = require('../models/Event');
+const User = require('../models/User');
+const Registration = require('../models/Registration');
+
+class AnalyticsHelper {
+  /**
+   * Get top-performing students across all events
+   * @param {number} limit - Number of top students to retrieve
+   * @returns {Array} Top students with their performance metrics
+   */
+  static async getTopPerformingStudents(limit = 10) {
+    try {
+      const students = await User.aggregate([
+        { $match: { role: 'student' } },
+        { $unwind: '$performanceMetrics' },
+        {
+          $group: {
+            _id: '$_id',
+            username: { $first: '$username' },
+            totalScore: { $sum: '$performanceMetrics.subEventPerformance.score' },
+            eventCount: { $sum: 1 }
+          }
+        },
+        { $sort: { totalScore: -1 } },
+        { $limit: limit }
+      ]);
+
+      return students;
+    } catch (error) {
+      console.error('Analytics Error:', error);
+      throw new Error('Failed to retrieve top-performing students');
+    }
+  }
+
+  /**
+   * Generate event participation analytics
+   * @param {string} eventId - Event ID to analyze
+   * @returns {Object} Comprehensive event analytics
+   */
+  static async getEventParticipationAnalytics(eventId) {
+    try {
+      const event = await Event.findById(eventId)
+        .populate('registeredStudents')
+        .populate('subEvents');
+
+      const registrations = await Registration.find({ event: eventId });
+
+      const departmentBreakdown = this.analyzeDepartmentParticipation(
+        event.registeredStudents, 
+        event.targetedAudience.departments
+      );
+
+      const subEventPerformance = await this.analyzeSubEventPerformance(event.subEvents);
+
+      return {
+        totalRegistrations: registrations.length,
+        departmentBreakdown,
+        subEventPerformance,
+        registeredStudents: event.registeredStudents.length,
+        maximumCapacity: event.maximumStudents
+      };
+    } catch (error) {
+      console.error('Event Analytics Error:', error);
+      throw new Error('Failed to generate event analytics');
+    }
+  }
+
+  /**
+   * Analyze department participation
+   * @param {Array} registeredStudents - List of registered students
+   * @param {Array} targetDepartments - Target departments
+   * @returns {Object} Department participation breakdown
+   */
+  static analyzeDepartmentParticipation(registeredStudents, targetDepartments) {
+    const departmentCounts = {};
+
+    targetDepartments.forEach(dept => {
+      departmentCounts[dept] = registeredStudents.filter(
+        student => student.department === dept
+      ).length;
+    });
+
+    return departmentCounts;
+  }
+
+  /**
+   * Analyze sub-event performance
+   * @param {Array} subEvents - List of sub-events
+   * @returns {Array} Sub-event performance metrics
+   */
+  static async analyzeSubEventPerformance(subEvents) {
+    const performanceMetrics = [];
+
+    for (const subEvent of subEvents) {
+      const registrations = await Registration.find({
+        'subEvents': subEvent._id
+      });
+
+      performanceMetrics.push({
+        name: subEvent.name,
+        registrations: registrations.length,
+        prizePools: subEvent.prizePools
+      });
+    }
+
+    return performanceMetrics;
+  }
+}
+
+module.exports = AnalyticsHelper;
+relative path - //utils/eventSchedulingAlgorithm.js
+const { Event } = require('../models/Event');
+
+class EventSchedulingAlgorithm {
+  /**
+   * Optimize event scheduling based on multiple criteria
+   * @param {Array} events - List of events to schedule
+   * @returns {Array} Optimized event schedule
+   */
+  static optimizeEventScheduling(events) {
+    // Sort events by priority
+    const sortedEvents = this.prioritizeEvents(events);
+
+    // Detect and resolve scheduling conflicts
+    const scheduledEvents = this.resolveSchedulingConflicts(sortedEvents);
+
+    return scheduledEvents;
+  }
+
+  /**
+   * Prioritize events based on multiple factors
+   * @param {Array} events - List of events to prioritize
+   * @returns {Array} Prioritized events
+   */
+  static prioritizeEvents(events) {
+    return events.sort((a, b) => {
+      // Priority factors:
+      // 1. Number of interested departments
+      // 2. Maximum student participation
+      // 3. Event complexity (number of sub-events)
+      const aDepartmentPriority = a.targetedAudience.departments.length;
+      const bDepartmentPriority = b.targetedAudience.departments.length;
+
+      const aStudentPriority = a.maximumStudents;
+      const bStudentPriority = b.maximumStudents;
+
+      const aSubEventPriority = a.subEvents.length;
+      const bSubEventPriority = b.subEvents.length;
+
+      // Complex scoring mechanism
+      const aScore = 
+        aDepartmentPriority * 0.4 + 
+        aStudentPriority * 0.3 + 
+        aSubEventPriority * 0.3;
+      
+      const bScore = 
+        bDepartmentPriority * 0.4 + 
+        bStudentPriority * 0.3 + 
+        bSubEventPriority * 0.3;
+
+      return bScore - aScore;
+    });
+  }
+
+  /**
+   * Resolve scheduling conflicts between events
+   * @param {Array} events - Prioritized events
+   * @returns {Array} Events with resolved scheduling conflicts
+   */
+  static resolveSchedulingConflicts(events) {
+    const scheduledEvents = [];
+    const usedTimeSlots = new Set();
+
+    for (const event of events) {
+      const potentialTimeSlots = this.generatePotentialTimeSlots(event);
+      
+      const availableSlot = potentialTimeSlots.find(slot => 
+        !this.isTimeSlotOverlapping(slot, usedTimeSlots)
+      );
+
+      if (availableSlot) {
+        event.scheduledTimeSlot = availableSlot;
+        scheduledEvents.push(event);
+        usedTimeSlots.add(availableSlot);
+      }
+    }
+
+    return scheduledEvents;
+  }
+
+  /**
+   * Generate potential time slots for an event
+   * @param {Object} event - Event to generate time slots for
+   * @returns {Array} Potential time slots
+   **/
+  static generatePotentialTimeSlots(event) {
+    const startDate = new Date(event.conductedDates.start);
+    const endDate = new Date(event.conductedDates.end);
+    const duration = endDate.getTime() - startDate.getTime();
+
+    // Generate multiple potential time slots
+    return [
+      { start: startDate, end: new Date(startDate.getTime() + duration) },
+      // Additional slot generation logic can be added here
+    ];
+  }
+
+  /**
+   * Check if a time slot overlaps with existing slots
+   * @param {Object} newSlot - New time slot to check
+   * @param {Set} existingSlots - Set of existing time slots
+   * @returns {boolean} Whether the slot overlaps
+   */
+  static isTimeSlotOverlapping(newSlot, existingSlots) {
+    for (const slot of existingSlots) {
+      if (
+        (newSlot.start >= slot.start && newSlot.start < slot.end) ||
+        (newSlot.end > slot.start && newSlot.end <= slot.end)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+module.exports = EventSchedulingAlgorithm;
+relative path - //utils/qrCodeGenerator.js
+const QRCode = require('qrcode');
+const fs = require('fs');
+const path = require('path');
+
+class QRCodeGenerator {
+  /**
+   * Generate QR Code for event registration
+   * @param {Object} data - Registration data to encode
+   * @param {string} eventId - Event ID
+   * @param {string} userId - User ID
+   * @returns {Promise<string>} Path to generated QR code
+   */
+  static async generateEventRegistrationQR(data, eventId, userId) {
+    try {
+      // Create QR code data
+      const qrData = JSON.stringify({
+        eventId,
+        userId,
+        ...data
+      });
+
+      // Define output directory
+      const outputDir = path.join(__dirname, '../qr_codes');
+      
+      // Create directory if it doesn't exist
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+
+      // Generate unique filename
+      const filename = `event_reg_${eventId}_${userId}_${Date.now()}.png`;
+      const filepath = path.join(outputDir, filename);
+
+      // Generate QR Code
+      await QRCode.toFile(filepath, qrData, {
+        color: {
+          dark: '#000',  // Black dots
+          light: '#FFF'  // White background
+        }
+      });
+
+      return filepath;
+    } catch (error) {
+      console.error('QR Code Generation Error:', error);
+      throw new Error('Failed to generate QR Code');
+    }
+  }
+
+  /**
+   * Verify QR Code data
+   * @param {string} qrString - Scanned QR code string
+   * @returns {Object} Decoded QR data
+   */
+  static verifyQRCode(qrString) {
+    try {
+      const decodedData = JSON.parse(qrString);
+      
+      // Validate required fields
+      if (!decodedData.eventId || !decodedData.userId) {
+        throw new Error('Invalid QR Code');
+      }
+
+      return decodedData;
+    } catch (error) {
+      console.error('QR Code Verification Error:', error);
+      throw new Error('Invalid QR Code format');
+    }
+  }
+}
+
+module.exports = QRCodeGenerator;
+relative path - //models/Event.js
+// /model/Event.js
+const mongoose = require('mongoose');
+
+const SubEventSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: [true, 'Sub-event name is required']
+  },
+  overview: String,
+  rules: [String],
+  venue: String,
+  targetedDepartments: [String],
+  targetedCourses: [String],
+  prizePools: [{
+    rank: Number,
+    amount: Number
+  }]
+});
+
+const EventSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: [true, 'Event name is required'],
+    trim: true
+  },
+  description: {
+    type: String,
+    required: [true, 'Event description is required']
+  },
+  conductedDates: {
+    start: {
+      type: Date,
+      required: [true, 'Start date is required']
+    },
+    end: {
+      type: Date,
+      required: [true, 'End date is required']
+    }
+  },
+  targetedAudience: {
+    departments: [String],
+    courses: [String]
+  },
+  organizingInstitution: String,
+  maximumStudents: {
+    type: Number,
+    default: 100
+  },
+  maxEventsPerStudent: {
+    type: Number,
+    default: 3
+  },
+  organizingCollege: String,
+  generalRules: [String],
+  contactInfo: {
+    email: String,
+    phone: String
+  },
+  organizer: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Organizer ID is required']
+  },
+  subEvents: [SubEventSchema],
+  registeredStudents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  status: {
+    type: String,
+    enum: ['upcoming', 'ongoing', 'completed'],
+    default: 'upcoming'
+  }
+}, {
+  timestamps: true
+});
+
+const Event = mongoose.model('Event', EventSchema);
+const SubEvent = mongoose.model('SubEvent', SubEventSchema);
+
+module.exports = { Event, SubEvent };
+relative path - //models/User.js
+const mongoose = require('mongoose');
+const validator = require('validator');
+const bcrypt = require('bcryptjs');
+
+const UserSchema = new mongoose.Schema({
+  username: {
+    type: String,
+    required: [true, 'Username is required'],
+    unique: true,
+    trim: true,
+    minlength: [3, 'Username must be at least 3 characters long']
+  },
+  email: {
+    type: String,
+    required: [true, 'Email is required'],
+    unique: true,
+    lowercase: true,
+    validate: [validator.isEmail, 'Please provide a valid email']
+  },
+  password: {
+    type: String,
+    required: [true, 'Password is required'],
+    minlength: [6, 'Password must be at least 6 characters long'],
+    select: false
+  },
+  role: {
+    type: String,
+    enum: ['student', 'organizer'],
+    required: [true, 'Role is required']
+  },
+  course: {
+    type: String,
+    required: [true, 'Course is required']
+  },
+  department: {
+    type: String,
+    required: [true, 'Department is required']
+  },
+  registeredEvents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Event'
+  }],
+  performanceMetrics: [{
+    event: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Event'
+    },
+    subEventPerformance: [{
+      subEvent: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'SubEvent'
+      },
+      rank: Number,
+      score: Number
+    }]
+  }]
+}, {
+  timestamps: true
+});
+
+// Hash password before saving
+UserSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  this.password = await bcrypt.hash(this.password, 12);
+  next();
+});
+
+// Method to check password
+UserSchema.methods.correctPassword = async function(candidatePassword, userPassword) {
+  return await bcrypt.compare(candidatePassword, userPassword);
+};
+
+const User = mongoose.model('User', UserSchema);
+module.exports = User;
+relative path - //models/Registration.js
+const mongoose = require('mongoose');
+
+const RegistrationSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  event: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Event',
+    required: true
+  },
+  subEvents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SubEvent'
+  }],
+  registrationDate: {
+    type: Date,
+    default: Date.now
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'confirmed', 'cancelled'],
+    default: 'pending'
+  }
+}, {
+  timestamps: true
+});
+
+const Registration = mongoose.model('Registration', RegistrationSchema);
+module.exports = Registration;
+relative path - //controllers/schedulingController.js
+const { Event } = require('../models/Event');
+const EventSchedulingAlgorithm = require('../utils/eventSchedulingAlgorithm');
+
+exports.optimizeEventSchedule = async (req, res) => {
+  try {
+    // Fetch upcoming events
+    const events = await Event.find({ 
+      status: 'upcoming',
+      'conductedDates.start': { $gte: new Date() }
+    });
+
+    // Optimize scheduling
+    const optimizedSchedule = EventSchedulingAlgorithm.optimizeEventScheduling(events);
+
+    // Update events with new scheduling information
+    const bulkUpdateOperations = optimizedSchedule.map(event => ({
+      updateOne: {
+        filter: { _id: event._id },
+        update: { 
+          $set: { 
+            scheduledTimeSlot: event.scheduledTimeSlot,
+            status: 'scheduled' 
+          }
+        }
+      }
+    }));
+
+    await Event.bulkWrite(bulkUpdateOperations);
+
+    res.json({
+      message: 'Event schedule optimized successfully',
+      schedule: optimizedSchedule
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Failed to optimize event schedule', 
+      error: error.message 
+    });
+  }
+};
+
+exports.getEventSchedule = async (req, res) => {
+  try {
+    const { startDate, endDate, department, course } = req.query;
+
+    let query = { 
+      status: { $in: ['upcoming', 'ongoing'] }
+    };
+
+    // Add date range filter if provided
+    if (startDate && endDate) {
+      query['conductedDates.start'] = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Add department filter if provided
+    if (department) {
+      query['targetedAudience.departments'] = department;
+    }
+
+    // Add course filter if provided
+    if (course) {
+      query['targetedAudience.courses'] = course;
+    }
+
+    const events = await Event.find(query)
+      .sort({ 'conductedDates.start': 1 })
+      .select('name description conductedDates targetedAudience');
+
+    res.json({
+      totalEvents: events.length,
+      events
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Failed to retrieve event schedule', 
+      error: error.message 
+    });
+  }
+};
+
+exports.rescheduleEvent = async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { newStartDate, newEndDate } = req.body;
+
+    const event = await Event.findById(eventId);
+
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // Update event dates
+    event.conductedDates = {
+      start: new Date(newStartDate),
+      end: new Date(newEndDate)
+    };
+
+    // Re-run scheduling optimization for this event
+    const optimizedSchedule = EventSchedulingAlgorithm.optimizeEventScheduling([event]);
+
+    // Update event with new scheduling
+    const updatedEvent = await Event.findByIdAndUpdate(
+      eventId, 
+      { 
+        conductedDates: event.conductedDates,
+        scheduledTimeSlot: optimizedSchedule[0].scheduledTimeSlot
+      }, 
+      { new: true }
+    );
+
+    res.json({
+      message: 'Event rescheduled successfully',
+      event: updatedEvent
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Failed to reschedule event', 
+      error: error.message 
+    });
+  }
+};
+relative path - //controllers/eventController.js
+// /contoroller/eventController.js
+const { Event, SubEvent } = require('../models/Event');
+const EventSchedulingAlgorithm = require('../utils/eventSchedulingAlgorithm');
+
+// In /contoroller/eventController.js
+exports.createEvent = async (req, res) => {
+  try {
+    const {
+      name, description, conductedDates,
+      targetedAudience, organizingInstitution,
+      maximumStudents, maxEventsPerStudent,
+      organizingCollege, generalRules,
+      contactInfo, subEvents
+    } = req.body;
+
+    // Create main event with embedded sub-events directly
+    const newEvent = new Event({
+      name,
+      description,
+      conductedDates,
+      targetedAudience,
+      organizingInstitution,
+      maximumStudents,
+      maxEventsPerStudent,
+      organizingCollege,
+      generalRules,
+      contactInfo,
+      subEvents: subEvents || [], // Include sub-events directly
+      organizer: req.user._id
+    });
+
+    await newEvent.save();
+
+    res.status(201).json({
+      message: 'Event created successfully',
+      event: newEvent
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Error creating event', 
+      error: error.message 
+    });
+  }
+};
+
+exports.getAllEvents = async (req, res) => {
+  try {
+    const { department, course } = req.query;
+    
+    let query = {};
+    if (department) {
+      query['targetedAudience.departments'] = department;
+    }
+    if (course) {
+      query['targetedAudience.courses'] = course;
+    }
+
+    const events = await Event.find(query)
+      .populate('subEvents')
+      .populate('organizer', 'username email')
+      .sort({ 'conductedDates.start': 1 });
+
+    res.json(events);
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Error fetching events', 
+      error: error.message 
+    });
+  }
+};
+
+exports.getEventById = async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id)
+      .populate('subEvents')
+      .populate('registeredStudents', 'username email')
+      .populate('organizer', 'username email');
+
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    res.json(event);
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Error fetching event', 
+      error: error.message 
+    });
+  }
+};
+
+exports.getMyEvents = async (req, res) => {
+  try {
+    const events = await Event.find({ organizer: req.user._id })
+      .populate('subEvents')
+      .populate('registeredStudents', 'username email')
+      .sort({ 'conductedDates.start': 1 });
+
+    res.json({
+      count: events.length,
+      events: events
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Error fetching your events', 
+      error: error.message 
+    });
+  }
+};
+
+exports.updateEvent = async (req, res) => {
+  try {
+    // First check if the user is the organizer of this event
+    const event = await Event.findById(req.params.id);
+    
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+    
+    // Check if the user is the organizer
+    if (event.organizer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        message: 'You are not authorized to update this event' 
+      });
+    }
+
+    const updatedEvent = await Event.findByIdAndUpdate(
+      req.params.id, 
+      req.body, 
+      { new: true, runValidators: true }
+    );
+
+    res.json({
+      message: 'Event updated successfully',
+      event: updatedEvent
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Error updating event', 
+      error: error.message 
+    });
+  }
+};
+
+exports.deleteEvent = async (req, res) => {
+  try {
+    // First check if the user is the organizer of this event
+    const event = await Event.findById(req.params.id);
+    
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+    
+    // Check if the user is the organizer
+    if (event.organizer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        message: 'You are not authorized to delete this event' 
+      });
+    }
+
+    const deletedEvent = await Event.findByIdAndDelete(req.params.id);
+
+    // Optional: Delete associated sub-events
+    await SubEvent.deleteMany({ _id: { $in: deletedEvent.subEvents } });
+
+    res.json({ 
+      message: 'Event deleted successfully' 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Error deleting event', 
+      error: error.message 
+    });
+  }
+};
+
+exports.optimizeEventScheduling = async (req, res) => {
+  try {
+    const events = await Event.find({
+      status: 'upcoming'
+    });
+
+    const optimizedSchedule = EventSchedulingAlgorithm.optimizeEventScheduling(events);
+
+    res.json({
+      message: 'Events optimally scheduled',
+      schedule: optimizedSchedule
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Error optimizing event scheduling', 
+      error: error.message 
+    });
+  }
+};
+relative path - //controllers/analyticsController.js
+const AnalyticsHelper = require('../utils/analyticsHelper');
+const { Event } = require('../models/Event');
+const User = require('../models/User');
+const Registration = require('../models/Registration');
+
+exports.getTopPerformingStudents = async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    const topStudents = await AnalyticsHelper.getTopPerformingStudents(Number(limit));
+    
+    res.json({
+      message: 'Top performing students retrieved',
+      topStudents
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Failed to retrieve top students', 
+      error: error.message 
+    });
+  }
+};
+
+exports.getEventParticipationAnalytics = async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const analytics = await AnalyticsHelper.getEventParticipationAnalytics(eventId);
+    
+    res.json({
+      message: 'Event participation analytics retrieved',
+      analytics
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Failed to retrieve event analytics', 
+      error: error.message 
+    });
+  }
+};
+
+exports.generateOverallEventInsights = async (req, res) => {
+  try {
+    // Total events
+    const totalEvents = await Event.countDocuments();
+    
+    // Total registrations
+    const totalRegistrations = await Registration.countDocuments();
+    
+    // Events by status
+    const eventStatusBreakdown = await Event.aggregate([
+      { $group: {
+        _id: '$status',
+        count: { $sum: 1 }
+      }}
+    ]);
+    
+    // Department participation
+    const departmentParticipation = await User.aggregate([
+      { $match: { role: 'student' } },
+      { $group: {
+        _id: '$department',
+        studentCount: { $sum: 1 }
+      }},
+      { $sort: { studentCount: -1 } }
+    ]);
+
+    res.json({
+      message: 'Overall event insights generated',
+      insights: {
+        totalEvents,
+        totalRegistrations,
+        eventStatusBreakdown,
+        departmentParticipation
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Failed to generate event insights', 
+      error: error.message 
+    });
+  }
+};
+relative path - //controllers/authController.js
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+
+const generateToken = (user) => {
+  return jwt.sign(
+    { 
+      id: user._id, 
+      role: user.role 
+    }, 
+    process.env.JWT_SECRET, 
+    { expiresIn: '30d' }
+  );
+};
+
+exports.register = async (req, res) => {
+  try {
+    const { username, email, password, role, course, department } = req.body;
+
+    // Check if user already exists
+    let existingUser = await User.findOne({ 
+      $or: [{ email }, { username }] 
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ 
+        message: 'User already exists with this email or username' 
+      });
+    }
+
+    // Create new user
+    const newUser = new User({
+      username,
+      email,
+      password,
+      role,
+      course,
+      department
+    });
+
+    await newUser.save();
+
+    // Generate token
+    const token = generateToken(newUser);
+
+    res.status(201).json({
+      message: 'User registered successfully',
+      token,
+      user: {
+        id: newUser._id,
+        username: newUser.username,
+        email: newUser.email,
+        role: newUser.role
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Server error during registration', 
+      error: error.message 
+    });
+  }
+};
+
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Find user and select password
+    const user = await User.findOne({ email }).select('+password');
+
+    if (!user) {
+      return res.status(401).json({ 
+        message: 'Invalid login credentials' 
+      });
+    }
+
+    // Check password
+    const isMatch = await user.correctPassword(password, user.password);
+
+    if (!isMatch) {
+      return res.status(401).json({ 
+        message: 'Invalid login credentials' 
+      });
+    }
+
+    // Generate token
+    const token = generateToken(user);
+
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Server error during login', 
+      error: error.message 
+    });
+  }
+};
+relative path - //controllers/registrationController.js
+const { Event } = require('../models/Event');
+const Registration = require('../models/Registration');
+const User = require('../models/User');
+const QRCodeGenerator = require('../utils/qrCodeGenerator');
+
+exports.registerForEvent = async (req, res) => {
+  try {
+    const { eventId, subEventIds } = req.body;
+    const userId = req.user._id;
+
+    // Find the event
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    // Check if user has reached max event registration limit
+    const existingRegistrations = await Registration.countDocuments({ 
+      user: userId, 
+      'event.status': 'upcoming' 
+    });
+
+    if (existingRegistrations >= event.maxEventsPerStudent) {
+      return res.status(400).json({ 
+        message: `You can only register for ${event.maxEventsPerStudent} events` 
+      });
+    }
+
+    // Check event capacity
+    const currentRegistrations = await Registration.countDocuments({ event: eventId });
+    if (currentRegistrations >= event.maximumStudents) {
+      return res.status(400).json({ message: 'Event is full' });
+    }
+
+    // Create registration
+    const registration = new Registration({
+      user: userId,
+      event: eventId,
+      subEvents: subEventIds || []
+    });
+
+    await registration.save();
+
+    // Generate QR Code for registration
+    const qrCodePath = await QRCodeGenerator.generateEventRegistrationQR(
+      { registrationId: registration._id },
+      eventId,
+      userId
+    );
+
+    // Update user's registered events
+    await User.findByIdAndUpdate(userId, {
+      $addToSet: { registeredEvents: eventId }
+    });
+
+    // Update event's registered students
+    await Event.findByIdAndUpdate(eventId, {
+      $addToSet: { registeredStudents: userId }
+    });
+
+    res.status(201).json({
+      message: 'Successfully registered for the event',
+      registration,
+      qrCodePath
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Registration failed', 
+      error: error.message 
+    });
+  }
+};
+
+exports.getUserRegistrations = async (req, res) => {
+  try {
+    const registrations = await Registration.find({ user: req.user._id })
+      .populate('event')
+      .populate('subEvents')
+      .sort({ 'event.conductedDates.start': 1 });
+
+    // Separate upcoming and past events
+    const upcomingEvents = registrations.filter(
+      reg => new Date(reg.event.conductedDates.start) > new Date()
+    );
+    const pastEvents = registrations.filter(
+      reg => new Date(reg.event.conductedDates.start) <= new Date()
+    );
+
+    res.json({
+      upcomingEvents,
+      pastEvents
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Failed to fetch registrations', 
+      error: error.message 
+    });
+  }
+};
+
+exports.cancelRegistration = async (req, res) => {
+  try {
+    const { registrationId } = req.params;
+    const userId = req.user._id;
+
+    const registration = await Registration.findOneAndDelete({ 
+      _id: registrationId, 
+      user: userId 
+    });
+
+    if (!registration) {
+      return res.status(404).json({ message: 'Registration not found' });
+    }
+
+    // Remove from user's registered events
+    await User.findByIdAndUpdate(userId, {
+      $pull: { registeredEvents: registration.event }
+    });
+
+    // Remove from event's registered students
+    await Event.findByIdAndUpdate(registration.event, {
+      $pull: { registeredStudents: userId }
+    });
+
+    res.json({ message: 'Registration cancelled successfully' });
+  } catch (error) {
+    res.status(500).json({ 
+      message: 'Failed to cancel registration', 
+      error: error.message 
+    });
+  }
+};
+relative path - //routes/authRoutes.js
+const express = require('express');
+const router = express.Router();
+const { 
+  register, 
+  login 
+} = require('../controllers/authController');
+const { validateRegistration } = require('../middlewares/validationMiddleware');
+
+const { 
+  authMiddleware,  
+} = require('../middlewares/authMiddleware');
+
+// Public Routes
+router.post('/register', validateRegistration, register);
+router.post('/login', login);
+
+// Protected Routes
+router.get('/profile', 
+  authMiddleware, 
+  (req, res) => {
+    res.json({ user: req.user });
+  }
+);
+
+module.exports = router;
+relative path - //routes/eventRoutes.js
+// /routes/eventRoutes.js
+const express = require('express');
+const router = express.Router();
+const {
+  createEvent,
+  getAllEvents,
+  getEventById,
+  updateEvent,
+  deleteEvent,
+  optimizeEventScheduling,
+  getMyEvents
+} = require('../controllers/eventController');
+const { 
+  authMiddleware, 
+  roleMiddleware 
+} = require('../middlewares/authMiddleware');
+const { 
+  validateEvent 
+} = require('../middlewares/validationMiddleware');
+
+// Public Routes
+router.get('/', getAllEvents);
+router.get('/:id', getEventById);
+
+// Protected Routes for Organizers
+router.get('/organizer/my-events', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  getMyEvents
+);
+
+router.post('/', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  validateEvent, 
+  createEvent
+);
+
+router.put('/:id', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  updateEvent
+);
+
+router.delete('/:id', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  deleteEvent
+);
+
+// Event Scheduling Route
+router.post('/optimize-scheduling', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  optimizeEventScheduling
+);
+
+module.exports = router;
+relative path - //routes/analyticsRoutes.js
+const express = require('express');
+const router = express.Router();
+const {
+  getTopPerformingStudents,
+  getEventParticipationAnalytics,
+  generateOverallEventInsights
+} = require('../controllers/analyticsController');
+const { 
+  authMiddleware, 
+  roleMiddleware 
+} = require('../middlewares/authMiddleware');
+
+// Protected Routes
+router.get('/top-students', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  getTopPerformingStudents
+);
+
+router.get('/event-participation/:eventId', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  getEventParticipationAnalytics
+);
+
+router.get('/overall-insights', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  generateOverallEventInsights
+);
+
+module.exports = router;
+relative path - //routes/registrationRoutes.js
+const express = require('express');
+const router = express.Router();
+const {
+  registerForEvent,
+  getUserRegistrations,
+  cancelRegistration
+} = require('../controllers/registrationController');
+const { 
+  authMiddleware, 
+  roleMiddleware 
+} = require('../middlewares/authMiddleware');
+
+// Protected Routes for Students
+router.post('/', 
+  authMiddleware, 
+  roleMiddleware(['student']), 
+  registerForEvent
+);
+
+router.get('/my-registrations', 
+  authMiddleware, 
+  roleMiddleware(['student']), 
+  getUserRegistrations
+);
+
+router.delete('/:registrationId', 
+  authMiddleware, 
+  roleMiddleware(['student']), 
+  cancelRegistration
+);
+
+module.exports = router;
+relative path - //routes/schedulingRoutes.js
+const express = require('express');
+const router = express.Router();
+const {
+  optimizeEventSchedule,
+  getEventSchedule,
+  rescheduleEvent
+} = require('../controllers/schedulingController');
+const { 
+  authMiddleware, 
+  roleMiddleware 
+} = require('../middlewares/authMiddleware');
+
+// Protected Routes for Organizers
+router.post('/optimize', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  optimizeEventSchedule
+);
+
+router.get('/schedule', 
+  authMiddleware, 
+  getEventSchedule
+);
+
+router.put('/reschedule/:eventId', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  rescheduleEvent
+);
+
+module.exports = router;

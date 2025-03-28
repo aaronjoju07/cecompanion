@@ -3,6 +3,8 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const dotenv = require('dotenv');
 const connectDB = require('./config/database');
+const path = require('path');
+const fs = require('fs');
 // import connectDB from './config/database';
 
 // Load environment variables
@@ -25,6 +27,7 @@ const eventRoutes = require('./routes/eventRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
 const schedulingRoutes = require('./routes/schedulingRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
+
 
 // Mount Routes
 app.use('/api/auth', authRoutes);
