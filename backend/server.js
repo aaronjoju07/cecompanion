@@ -36,6 +36,9 @@ app.use('/api/registrations', registrationRoutes);
 app.use('/api/scheduling', schedulingRoutes);
 app.use('/api/analytics', analyticsRoutes);
 
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
 // Global Error Handler
 app.use((err, _req, res, _next) => {
   console.error(err.stack);

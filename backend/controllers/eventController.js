@@ -31,13 +31,35 @@ exports.createEvent = async (req, res) => {
       organizer: req.user._id
     });
 
-    if (req.files?.pdf) {
-      const pdfPath = path.join(__dirname, '../pdfs', `${newEvent._id}.pdf`);
-      await req.files.pdf.mv(pdfPath);
-      await chatbotService.addNewPDF(pdfPath);
-    }
+    // if (req.files?.pdf) {
+    //   const pdfPath = path.join(__dirname, '../pdfs', `${newEvent._id}.pdf`);
+    //   await req.files.pdf.mv(pdfPath);
+    //   await chatbotService.addNewPDF(pdfPath);
+    // }
 
     await newEvent.save();
+
+    // Process PDFs with Python service
+    if (req.files?.pdfs) {
+      const formData = new FormData();
+      formData.append('event_id', newEvent._id);
+
+      // Add each PDF file to form data
+      req.files.forEach((file, index) => {
+        formData.append('pdfs', file.buffer, {
+          filename: `${newEvent._id}_${index}.pdf`,
+          contentType: file.mimetype
+        });
+      });
+
+      // Send to Python processing service
+      await axios.post('http://localhost:5001/process_event_pdfs', formData, {
+        headers: {
+          ...formData.getHeaders(),
+          'Content-Length': formData.getLengthSync()
+        }
+      });
+    }
 
     res.status(201).json({
       message: 'Event created successfully',

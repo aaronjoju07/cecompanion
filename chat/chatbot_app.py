@@ -11,7 +11,7 @@ import os
 app = Flask(__name__)
 
 # Set Google API key
-os.environ["GOOGLE_API_KEY"] = "YOUR_API_KEY"  # Replace with your actual API key
+os.environ["GOOGLE_API_KEY"] = "AIzaSyCQm0KhDrntN2VaiTi7aHCoVpZYFMQo_jg"  
 
 # Initialize embeddings
 embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -35,7 +35,7 @@ def process_pdf(pdf_path, event_id):
 
 def get_conversation_chain(vector_store):
     """Create a conversational chain for querying."""
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2, convert_system_message_to_human=True)
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.5, convert_system_message_to_human=True)
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key="answer")
     return ConversationalRetrievalChain.from_llm(
         llm=llm,
