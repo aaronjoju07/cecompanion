@@ -1,74 +1,61 @@
 // /contoroller/eventController.js
 const { Event, SubEvent } = require('../models/Event');
 const EventSchedulingAlgorithm = require('../utils/eventSchedulingAlgorithm');
-const fs = require('fs');
-const path = require('path');
 
-// In /contoroller/eventController.js
+// In /controller/eventController.js (or wherever your controller is)
 exports.createEvent = async (req, res) => {
   try {
     const {
-      name, description, conductedDates,
-      targetedAudience, organizingInstitution,
-      maximumStudents, maxEventsPerStudent,
-      organizingCollege, generalRules,
-      contactInfo, subEvents
-    } = req.body;
-
-    // Create main event with embedded sub-events directly
-    const newEvent = new Event({
       name,
       description,
       conductedDates,
+      targetedAudience = {},
+      organizingInstitution = '',
+      maximumStudents = 100,
+      maxEventsPerStudent = 3,
+      organizingCollege = '',
+      generalRules = [],
+      contactInfo = {},
+      subEvents = [],
+    } = req.body;
+
+    // Validate required fields
+    if (!name || !description || !conductedDates?.start || !conductedDates?.end) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    // Create new event object
+    const newEvent = new Event({
+      name,
+      description,
+      conductedDates: {
+        start: new Date(conductedDates.start),
+        end: new Date(conductedDates.end),
+      },
       targetedAudience,
       organizingInstitution,
-      maximumStudents,
-      maxEventsPerStudent,
+      maximumStudents: parseInt(maximumStudents),
+      maxEventsPerStudent: parseInt(maxEventsPerStudent),
       organizingCollege,
       generalRules,
       contactInfo,
-      subEvents: subEvents || [], // Include sub-events directly
-      organizer: req.user._id
+      subEvents,
+      organizer: req.user._id, // Assuming user ID comes from auth middleware
     });
 
-    // if (req.files?.pdf) {
-    //   const pdfPath = path.join(__dirname, '../pdfs', `${newEvent._id}.pdf`);
-    //   await req.files.pdf.mv(pdfPath);
-    //   await chatbotService.addNewPDF(pdfPath);
-    // }
-
+    // Save to database
     await newEvent.save();
 
-    // Process PDFs with Python service
-    if (req.files?.pdfs) {
-      const formData = new FormData();
-      formData.append('event_id', newEvent._id);
-
-      // Add each PDF file to form data
-      req.files.forEach((file, index) => {
-        formData.append('pdfs', file.buffer, {
-          filename: `${newEvent._id}_${index}.pdf`,
-          contentType: file.mimetype
-        });
-      });
-
-      // Send to Python processing service
-      await axios.post('http://localhost:5001/process_event_pdfs', formData, {
-        headers: {
-          ...formData.getHeaders(),
-          'Content-Length': formData.getLengthSync()
-        }
-      });
-    }
-
+    // Return success response with event details
     res.status(201).json({
       message: 'Event created successfully',
-      event: newEvent
+      event: newEvent,
     });
   } catch (error) {
-    res.status(500).json({ 
-      message: 'Error creating event', 
-      error: error.message 
+    console.error('Create Event Error:', error.message);
+    res.status(500).json({
+      message: 'Error creating event',
+      error: error.message,
     });
   }
 };
@@ -76,7 +63,7 @@ exports.createEvent = async (req, res) => {
 exports.getAllEvents = async (req, res) => {
   try {
     const { department, course } = req.query;
-    
+
     let query = {};
     if (department) {
       query['targetedAudience.departments'] = department;
@@ -92,9 +79,9 @@ exports.getAllEvents = async (req, res) => {
 
     res.json(events);
   } catch (error) {
-    res.status(500).json({ 
-      message: 'Error fetching events', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Error fetching events',
+      error: error.message
     });
   }
 };
@@ -112,9 +99,9 @@ exports.getEventById = async (req, res) => {
 
     res.json(event);
   } catch (error) {
-    res.status(500).json({ 
-      message: 'Error fetching event', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Error fetching event',
+      error: error.message
     });
   }
 };
@@ -131,9 +118,9 @@ exports.getMyEvents = async (req, res) => {
       events: events
     });
   } catch (error) {
-    res.status(500).json({ 
-      message: 'Error fetching your events', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Error fetching your events',
+      error: error.message
     });
   }
 };
@@ -142,21 +129,21 @@ exports.updateEvent = async (req, res) => {
   try {
     // First check if the user is the organizer of this event
     const event = await Event.findById(req.params.id);
-    
+
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
-    
+
     // Check if the user is the organizer
     if (event.organizer.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ 
-        message: 'You are not authorized to update this event' 
+      return res.status(403).json({
+        message: 'You are not authorized to update this event'
       });
     }
 
     const updatedEvent = await Event.findByIdAndUpdate(
-      req.params.id, 
-      req.body, 
+      req.params.id,
+      req.body,
       { new: true, runValidators: true }
     );
 
@@ -165,9 +152,9 @@ exports.updateEvent = async (req, res) => {
       event: updatedEvent
     });
   } catch (error) {
-    res.status(500).json({ 
-      message: 'Error updating event', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Error updating event',
+      error: error.message
     });
   }
 };
@@ -176,15 +163,15 @@ exports.deleteEvent = async (req, res) => {
   try {
     // First check if the user is the organizer of this event
     const event = await Event.findById(req.params.id);
-    
+
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
-    
+
     // Check if the user is the organizer
     if (event.organizer.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ 
-        message: 'You are not authorized to delete this event' 
+      return res.status(403).json({
+        message: 'You are not authorized to delete this event'
       });
     }
 
@@ -193,13 +180,13 @@ exports.deleteEvent = async (req, res) => {
     // Optional: Delete associated sub-events
     await SubEvent.deleteMany({ _id: { $in: deletedEvent.subEvents } });
 
-    res.json({ 
-      message: 'Event deleted successfully' 
+    res.json({
+      message: 'Event deleted successfully'
     });
   } catch (error) {
-    res.status(500).json({ 
-      message: 'Error deleting event', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Error deleting event',
+      error: error.message
     });
   }
 };
@@ -217,9 +204,9 @@ exports.optimizeEventScheduling = async (req, res) => {
       schedule: optimizedSchedule
     });
   } catch (error) {
-    res.status(500).json({ 
-      message: 'Error optimizing event scheduling', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Error optimizing event scheduling',
+      error: error.message
     });
   }
 };

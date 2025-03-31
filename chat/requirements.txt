@@ -7,3 +7,10 @@ faiss-cpu
 google-generativeai
 python-dotenv
 Werkzeug
+CORS
+pdfplumber
+pymongo
+llama_index.embeddings.gemini
+llama_index.llms.gemini
+llama_index.core
+llama_index.vector_stores.mongodb

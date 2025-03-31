@@ -1,51 +1,72 @@
-// services/chatbotService.js
-const path = require('path');
-const fs = require('fs');
-const { PyPDFLoader } = require('langchain/document_loaders');
-const { RecursiveCharacterTextSplitter } = require('langchain/text_splitters');
+const { Document } = require('langchain/document');
 const { FAISS } = require('langchain/vectorstores');
-const { GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI } = require('langchain-google-genai');
+const { GoogleGenerativeAIEmbeddings } = require('langchain-google-genai');
+const { ChatGoogleGenerativeAI } = require('langchain-google-genai');
 const { ConversationalRetrievalChain } = require('langchain/chains');
 const { ConversationBufferMemory } = require('langchain/memory');
-const Registration = require('../models/Registration');
+const cron = require('node-cron');
 const Event = require('../models/Event');
+const User = require('../models/User');
+const Registration = require('../models/Registration');
+
+// Helper functions to create text documents from database data
+function createEventDocument(event) {
+  return `Event ID: ${event._id}, Name: ${event.name}, Description: ${event.description}, Start Date: ${event.conductedDates.start}, End Date: ${event.conductedDates.end}, Venue: ${event.venue || 'Not specified'}, Status: ${event.status}, Organizer: ${event.organizer}, Targeted Departments: ${event.targetedAudience.departments.join(', ')}, Targeted Courses: ${event.targetedAudience.courses.join(', ')}`;
+}
+
+function createUserDocument(user) {
+  return `User ID: ${user._id}, Username: ${user.username}, Email: ${user.email}, Role: ${user.role}, Course: ${user.course}, Department: ${user.department}`;
+}
+
+function createRegistrationDocument(registration) {
+  return `Registration ID: ${registration._id}, User ID: ${registration.user._id}, Username: ${registration.user.username}, Event ID: ${registration.event._id}, Event Name: ${registration.event.name}, Status: ${registration.status}`;
+}
 
 class ChatbotService {
   constructor() {
-    this.vectorStores = new Map();
-    this.conversationChains = new Map();
-    this.embeddings = new GoogleGenerativeAIEmbeddings({ 
+    // Initialize embeddings for vector store
+    this.embeddings = new GoogleGenerativeAIEmbeddings({
       model: "models/embedding-001",
-      apiKey: process.env.GOOGLE_API_KEY 
+      apiKey: process.env.GOOGLE_API_KEY
     });
-    this.pdfDir = path.join(__dirname, '../pdfs');
-    this.initializeVectorStores();
+
+    // Initial setup of vector store
+    this.initializeVectorStore();
+
+    // Schedule vector store refresh every hour
+    cron.schedule('0 * * * *', async () => {
+      console.log('Refreshing vector store...');
+      await this.initializeVectorStore();
+    });
   }
 
-  async initializeVectorStores() {
-    if (!fs.existsSync(this.pdfDir)) {
-      fs.mkdirSync(this.pdfDir);
-    }
-
-    const pdfFiles = fs.readdirSync(this.pdfDir).filter(file => file.endsWith('.pdf'));
-    for (const pdfFile of pdfFiles) {
-      const pdfPath = path.join(this.pdfDir, pdfFile);
-      await this.processPDF(pdfPath);
-    }
-  }
-
-  async processPDF(pdfPath) {
+  async initializeVectorStore() {
     try {
-      const loader = new PyPDFLoader(pdfPath);
-      const documents = await loader.load();
+      // Fetch all data from MongoDB
+      const events = await Event.find().lean();
+      const users = await User.find().lean();
+      const registrations = await Registration.find().populate('user').populate('event').lean();
 
-      const textSplitter = new RecursiveCharacterTextSplitter({
-        chunkSize: 1500,
-        chunkOverlap: 150
-      });
-      const chunks = await textSplitter.splitDocuments(documents);
+      // Create LangChain Document objects
+      const allDocs = [
+        ...events.map(event => new Document({
+          pageContent: createEventDocument(event),
+          metadata: { type: 'event', id: event._id }
+        })),
+        ...users.map(user => new Document({
+          pageContent: createUserDocument(user),
+          metadata: { type: 'user', id: user._id }
+        })),
+        ...registrations.map(reg => new Document({
+          pageContent: createRegistrationDocument(reg),
+          metadata: { type: 'registration', id: reg._id }
+        }))
+      ];
 
-      const vectorStore = await FAISS.fromDocuments(chunks, this.embeddings);
+      // Create FAISS vector store
+      this.vectorStore = await FAISS.fromDocuments(allDocs, this.embeddings);
+
+      // Set up the language model
       const llm = new ChatGoogleGenerativeAI({
         model: "gemini-1.5-flash",
         temperature: 0.2,
@@ -53,79 +74,61 @@ class ChatbotService {
         convertSystemMessageToHuman: true
       });
 
+      // Set up conversation memory
       const memory = new ConversationBufferMemory({
         memoryKey: "chat_history",
         returnMessages: true,
         outputKey: 'answer'
       });
 
-      const conversationChain = ConversationalRetrievalChain.fromLLM({
+      // Custom QA prompt to enforce "I don't know" when information is missing
+      const qaTemplate = `
+You are an AI assistant that helps users with questions about their event registrations. You have access to the following context from the database:
+
+{context}
+
+Your task is to read the user's query and the provided context, and then generate a helpful and accurate response.
+
+If the context does not provide enough information to answer the query, say "I'm sorry, I don't have enough information to answer that question."
+
+Otherwise, use the context to formulate your response.
+
+Human: {question}
+Assistant:
+      `;
+
+      // Create the conversational retrieval chain
+      this.conversationChain = ConversationalRetrievalChain.fromLLM({
         llm,
-        retriever: vectorStore.asRetriever({ searchKwargs: { k: 5 } }),
+        retriever: this.vectorStore.asRetriever({ searchKwargs: { k: 5 } }),
         memory,
-        returnSourceDocuments: true
+        returnSourceDocuments: true,
+咕咕咕qaTemplate: qaTemplate
       });
 
-      const pdfName = path.basename(pdfPath);
-      this.vectorStores.set(pdfName, vectorStore);
-      this.conversationChains.set(pdfName, conversationChain);
+      console.log('Vector store initialized successfully.');
     } catch (error) {
-      console.error(`Error processing PDF ${pdfPath}:`, error);
+      console.error('Error initializing vector store:', error);
     }
-  }
-
-  async addNewPDF(pdfPath) {
-    await this.processPDF(pdfPath);
-  }
-
-  async getDBContext(userId, question) {
-    const registrations = await Registration.find({ user: userId })
-      .populate('event')
-      .lean();
-
-    const upcomingEvents = registrations.filter(reg => 
-      new Date(reg.event.conductedDates.start) > new Date()
-    );
-    const pastEvents = registrations.filter(reg => 
-      new Date(reg.event.conductedDates.start) <= new Date()
-    );
-
-    let context = '';
-    if (question.toLowerCase().includes('upcoming events')) {
-      context += 'Upcoming events you\'re registered for:\n' + 
-        upcomingEvents.map(e => `- ${e.event.name} (Start: ${new Date(e.event.conductedDates.start).toLocaleString()})`).join('\n');
-    }
-    if (question.toLowerCase().includes('current event') || question.toLowerCase().includes('registered')) {
-      context += 'Your registered events:\n' + 
-        registrations.map(e => `- ${e.event.name} (Start: ${new Date(e.event.conductedDates.start).toLocaleString()})`).join('\n');
-    }
-    if (question.toLowerCase().includes('location')) {
-      context += 'Event locations:\n' + 
-        registrations.map(e => `- ${e.event.name}: ${e.event.venue || 'Not specified'}`).join('\n');
-    }
-
-    return context;
   }
 
   async processQuestion(userId, question) {
-    const dbContext = await this.getDBContext(userId, question);
-    let fullResponse = dbContext ? `${dbContext}\n\n` : '';
+    try {
+      // Modify the question to include user context
+      const modifiedQuestion = `For user ${userId}: ${question}`;
 
-    for (const [pdfName, conversationChain] of this.conversationChains) {
-      try {
-        const response = await conversationChain({
-          question: `${question}\nAdditional context: ${dbContext}`
-        });
-        
-        fullResponse += `From ${pdfName}:\n${response.answer}\n\n`;
-      } catch (error) {
-        console.error(`Error querying ${pdfName}:`, error);
-      }
+      // Get response from the conversational chain
+      const response = await this.conversationChain({
+        question: modifiedQuestion
+      });
+
+      return {
+        answer: response.answer || "I'm sorry, I don't have enough information to answer that question."
+      };
+    } catch (error) {
+      console.error('Error processing question:', error);
+      return { answer: "I'm sorry, there was an error processing your question." };
     }
-
-    return {
-      answer: fullResponse || 'I couldn\'t find relevant information to answer your question.'
-    };
   }
 }
 
