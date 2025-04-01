@@ -1,135 +1,98 @@
-const { Document } = require('langchain/document');
-const { FAISS } = require('langchain/vectorstores');
-const { GoogleGenerativeAIEmbeddings } = require('langchain-google-genai');
-const { ChatGoogleGenerativeAI } = require('langchain-google-genai');
-const { ConversationalRetrievalChain } = require('langchain/chains');
-const { ConversationBufferMemory } = require('langchain/memory');
-const cron = require('node-cron');
-const Event = require('../models/Event');
-const User = require('../models/User');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { Event } = require('../models/Event');
 const Registration = require('../models/Registration');
 
-// Helper functions to create text documents from database data
-function createEventDocument(event) {
-  return `Event ID: ${event._id}, Name: ${event.name}, Description: ${event.description}, Start Date: ${event.conductedDates.start}, End Date: ${event.conductedDates.end}, Venue: ${event.venue || 'Not specified'}, Status: ${event.status}, Organizer: ${event.organizer}, Targeted Departments: ${event.targetedAudience.departments.join(', ')}, Targeted Courses: ${event.targetedAudience.courses.join(', ')}`;
-}
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
-function createUserDocument(user) {
-  return `User ID: ${user._id}, Username: ${user.username}, Email: ${user.email}, Role: ${user.role}, Course: ${user.course}, Department: ${user.department}`;
-}
+const functionImplementations = {
+  get_upcoming_events: async (args, userId) => {
+    const currentDate = new Date();
+    const events = await Event.find({
+      'conductedDates.start': { $gte: currentDate },
+      status: 'upcoming',
+    }).select('name description conductedDates');
+    return JSON.stringify(events);
+  },
+  get_event_details: async (args, userId) => {
+    const { eventName } = args;
+    const event = await Event.findOne({ name: eventName });
+    if (!event) return JSON.stringify({ error: 'Event not found' });
+    return JSON.stringify(event);
+  },
+  get_my_registrations: async (args, userId) => {
+    const registrations = await Registration.find({ user: userId })
+      .populate('event')
+      .lean();
+    const events = registrations.map(r => r.event);
+    return JSON.stringify(events);
+  },
+};
 
-function createRegistrationDocument(registration) {
-  return `Registration ID: ${registration._id}, User ID: ${registration.user._id}, Username: ${registration.user.username}, Event ID: ${registration.event._id}, Event Name: ${registration.event.name}, Status: ${registration.status}`;
-}
+const tools = [
+  {
+    functionDeclarations: [
+      { name: 'get_upcoming_events', description: 'Get a list of upcoming events' },
+      {
+        name: 'get_event_details',
+        description: 'Get details of a specific event by name',
+        parameters: {
+          type: 'object',
+          properties: {
+            eventName: { type: 'string', description: 'The name of the event' },
+          },
+          required: ['eventName'],
+        },
+      },
+      { name: 'get_my_registrations', description: 'Get the events the user is registered for' },
+    ],
+  },
+];
 
 class ChatbotService {
-  constructor() {
-    // Initialize embeddings for vector store
-    this.embeddings = new GoogleGenerativeAIEmbeddings({
-      model: "models/embedding-001",
-      apiKey: process.env.GOOGLE_API_KEY
-    });
-
-    // Initial setup of vector store
-    this.initializeVectorStore();
-
-    // Schedule vector store refresh every hour
-    cron.schedule('0 * * * *', async () => {
-      console.log('Refreshing vector store...');
-      await this.initializeVectorStore();
-    });
-  }
-
-  async initializeVectorStore() {
-    try {
-      // Fetch all data from MongoDB
-      const events = await Event.find().lean();
-      const users = await User.find().lean();
-      const registrations = await Registration.find().populate('user').populate('event').lean();
-
-      // Create LangChain Document objects
-      const allDocs = [
-        ...events.map(event => new Document({
-          pageContent: createEventDocument(event),
-          metadata: { type: 'event', id: event._id }
-        })),
-        ...users.map(user => new Document({
-          pageContent: createUserDocument(user),
-          metadata: { type: 'user', id: user._id }
-        })),
-        ...registrations.map(reg => new Document({
-          pageContent: createRegistrationDocument(reg),
-          metadata: { type: 'registration', id: reg._id }
-        }))
-      ];
-
-      // Create FAISS vector store
-      this.vectorStore = await FAISS.fromDocuments(allDocs, this.embeddings);
-
-      // Set up the language model
-      const llm = new ChatGoogleGenerativeAI({
-        model: "gemini-1.5-flash",
-        temperature: 0.2,
-        apiKey: process.env.GOOGLE_API_KEY,
-        convertSystemMessageToHuman: true
-      });
-
-      // Set up conversation memory
-      const memory = new ConversationBufferMemory({
-        memoryKey: "chat_history",
-        returnMessages: true,
-        outputKey: 'answer'
-      });
-
-      // Custom QA prompt to enforce "I don't know" when information is missing
-      const qaTemplate = `
-You are an AI assistant that helps users with questions about their event registrations. You have access to the following context from the database:
-
-{context}
-
-Your task is to read the user's query and the provided context, and then generate a helpful and accurate response.
-
-If the context does not provide enough information to answer the query, say "I'm sorry, I don't have enough information to answer that question."
-
-Otherwise, use the context to formulate your response.
-
-Human: {question}
-Assistant:
-      `;
-
-      // Create the conversational retrieval chain
-      this.conversationChain = ConversationalRetrievalChain.fromLLM({
-        llm,
-        retriever: this.vectorStore.asRetriever({ searchKwargs: { k: 5 } }),
-        memory,
-        returnSourceDocuments: true,
-咕咕咕qaTemplate: qaTemplate
-      });
-
-      console.log('Vector store initialized successfully.');
-    } catch (error) {
-      console.error('Error initializing vector store:', error);
-    }
-  }
-
   async processQuestion(userId, question) {
     try {
-      // Modify the question to include user context
-      const modifiedQuestion = `For user ${userId}: ${question}`;
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const chat = model.startChat({ tools });
 
-      // Get response from the conversational chain
-      const response = await this.conversationChain({
-        question: modifiedQuestion
-      });
+      // Send the user's question
+      const result = await chat.sendMessage(question);
+      const response = result.response;
 
-      return {
-        answer: response.answer || "I'm sorry, I don't have enough information to answer that question."
-      };
+      // Log the full response to understand its structure
+      console.log('Raw API Response:', JSON.stringify(response, null, 2));
+
+      // Extract text and function calls safely
+      const text = response.text && typeof response.text === 'function' ? response.text() : response.text || '';
+      const functionCalls = response.functionCalls || (response.candidates && response.candidates[0]?.content?.parts?.filter(part => part.functionCall)?.map(part => part.functionCall)) || [];
+
+      console.log('Extracted Text:', text);
+      console.log('Extracted Function Calls:', functionCalls);
+
+      // Handle function calls if present
+      if (functionCalls.length > 0) {
+        const functionCall = functionCalls[0];
+        if (functionCall && functionCall.name && functionImplementations[functionCall.name]) {
+          const { name, args } = functionCall;
+          const functionResult = await functionImplementations[name](args || {}, userId);
+          const functionResponse = await chat.sendMessage([
+            {
+              role: 'function',
+              parts: [{ functionResponse: { name, response: { content: functionResult } } }],
+            },
+          ]);
+          return { answer: functionResponse.response.text() || 'Function executed, but no response text available.' };
+        } else {
+          return { answer: 'Invalid function call received from the API.' };
+        }
+      }
+
+      // Return text response if no function calls
+      return { answer: text || 'No response available.' };
     } catch (error) {
-      console.error('Error processing question:', error);
-      return { answer: "I'm sorry, there was an error processing your question." };
+      console.error('Chatbot Processing Error:', error);
+      throw error; // Let the route handler catch and respond
     }
   }
 }
 
-module.exports = ChatbotService;
+module.exports = new ChatbotService();

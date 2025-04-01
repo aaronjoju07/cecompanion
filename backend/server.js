@@ -3,9 +3,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const dotenv = require('dotenv');
 const connectDB = require('./config/database');
-const path = require('path');
-const fs = require('fs');
-// import connectDB from './config/database';
+
 
 // Load environment variables
 dotenv.config();
@@ -30,7 +28,7 @@ const eventRoutes = require('./routes/eventRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
 const schedulingRoutes = require('./routes/schedulingRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
-
+const chatbotRoutes = require('./routes/chatbotRoutes');
 
 // Mount Routes
 app.use('/api/auth', authRoutes);
@@ -38,6 +36,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/registrations', registrationRoutes);
 app.use('/api/scheduling', schedulingRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/chatbot', chatbotRoutes);
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
