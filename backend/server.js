@@ -28,13 +28,14 @@ const eventRoutes = require('./routes/eventRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
 const schedulingRoutes = require('./routes/schedulingRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
-
+const subEventRoutes = require('./routes/subEventRoutes');
 // Mount Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/registrations', registrationRoutes);
 app.use('/api/scheduling', schedulingRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/subevents', subEventRoutes);
 
 
 app.use(express.json({ limit: '50mb' }));
