@@ -1,8 +1,15 @@
 from flask import Flask, request, jsonify
+import os
 from flask_cors import CORS
+import tempfile
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
 import pdfplumber
 import re
-import os
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS to allow requests from Next.js
