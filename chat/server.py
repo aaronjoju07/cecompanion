@@ -50,11 +50,21 @@ def extract_details():
 def chat():
     data = request.get_json()
     question = data.get("question")
+    chatbot_role = (
+        "You are an event assistant for students attending a technical event. "
+        "You have access to a PDF document containing details about the event. "
+        "Your task is to answer queries about the event, including schedules, rules, registration, workshops, competitions, and prizes. "
+        "Be precise and refer to official details. "
+        "If you don't know the answer, say 'I don't know'. "
+        "If the question is not related to the event, say 'This question is not related to the event.' "
+        "If the question is not clear, ask for clarification."
+    )
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     # Add allow_dangerous_deserialization=True to the load_local call
     loaded_vector_store = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
     loaded_conversation_chain = get_conversation_chain(loaded_vector_store)
-    response = loaded_conversation_chain({"question": question})
+    full_prompt = chatbot_role + "\n" + question
+    response = loaded_conversation_chain({"question": full_prompt})
 
     answer = response["answer"]
     return jsonify({"response": answer}), 200
