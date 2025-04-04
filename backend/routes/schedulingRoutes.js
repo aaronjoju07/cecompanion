@@ -3,7 +3,8 @@ const router = express.Router();
 const {
   optimizeEventSchedule,
   getEventSchedule,
-  rescheduleEvent
+  rescheduleEvent,
+  editSubEventSchedule // Ensure this is imported
 } = require('../controllers/schedulingController');
 const { 
   authMiddleware, 
@@ -26,6 +27,12 @@ router.put('/reschedule/:eventId',
   authMiddleware, 
   roleMiddleware(['organizer']), 
   rescheduleEvent
+);
+
+router.put('/edit/:scheduleId', 
+  authMiddleware, 
+  roleMiddleware(['organizer']), 
+  editSubEventSchedule // Use the imported function directly
 );
 
 module.exports = router;
